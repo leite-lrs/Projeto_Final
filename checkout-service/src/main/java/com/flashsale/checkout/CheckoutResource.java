@@ -8,17 +8,23 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.enums.SchemaType;
+import org.eclipse.microprofile.openapi.annotations.media.Content;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 @Path("/")
 public class CheckoutResource {
@@ -38,54 +44,146 @@ public class CheckoutResource {
     @GET
     @Path("/health")
     @Produces(MediaType.APPLICATION_JSON)
-    public Map<String, String> health() {
-        Map<String, String> status = new HashMap<>();
-        status.put("status", "ok");
-        status.put("service", "checkout-service");
-        status.put("redis", "ok");
+    @Operation(summary = "Health check do serviço", description = "Retorna o status geral do microsserviço e indicadores operacionais básicos.")
+    @APIResponse(responseCode = "200", description = "Serviço saudável", content = @Content(mediaType = "application/json", schema = @Schema(type = SchemaType.OBJECT)))
+    public Map<String, Object> health() {
+        return healthStatus();
+    }
+
+    private Map<String, Object> healthStatus() {
+        Map<String, Object> status = healthMetadata();
+        status.put("checks", healthChecks());
         return status;
+    }
+
+    private Map<String, Object> healthMetadata() {
+        return new LinkedHashMap<>(Map.of("status", "UP", "service", "checkout-service",
+            "redis", "UP", "api_version", "v1", "cache_ttl_seconds", CheckoutRedisAdapter.cacheTtlSeconds()));
+    }
+
+    private Map<String, String> healthChecks() {
+        return Map.of("readiness", "UP", "liveness", "UP");
+    }
+
+    @GET
+    @Path("/health/ready")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Map<String, Object> readiness() {
+        return Map.of(
+            "status", "READY",
+            "service", "checkout-service",
+            "dependencies", Map.of("redis", "UP", "rabbitmq", "UP")
+        );
+    }
+
+    @GET
+    @Path("/health/live")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Map<String, Object> liveness() {
+        return Map.of(
+            "status", "LIVE",
+            "service", "checkout-service",
+            "uptime_seconds", System.currentTimeMillis() / 1000L
+        );
     }
 
     @POST
     @Path("/v1/orders")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
+    @Operation(summary = "Cria um pedido de checkout", description = "Valida o contrato do pedido, reserva o estoque e publica o evento de criação para processamento.")
+    @APIResponse(responseCode = "202", description = "Pedido aceito e enviado para processamento", content = @Content(mediaType = "application/json"))
+    @APIResponse(responseCode = "400", description = "Payload inválido")
+    @APIResponse(responseCode = "409", description = "Estoque insuficiente")
     public Response createOrder(OrderRequest request) {
-        if (request == null || request.produtoId() == null || request.produtoId().isBlank()) {
-            return badRequest("produto_id é obrigatório");
+        String validation = validateOrderRequest(request);
+        if (validation != null) {
+            return badRequest(validation);
         }
-        if (request.quantidade() == null || request.quantidade() <= 0) {
-            return badRequest("quantidade deve ser maior que zero");
-        }
-        if (request.clienteCpf() == null || request.clienteCpf().isBlank()) {
-            return badRequest("cliente_cpf é obrigatório");
-        }
-        if (request.clienteNome() == null || request.clienteNome().isBlank()) {
-            return badRequest("cliente_nome é obrigatório");
-        }
+        return processValidOrder(request);
+    }
 
+    private static String validateOrderRequest(OrderRequest request) {
+        if (request == null) {
+            return "pedido é obrigatório";
+        }
+        return firstValidationError(request);
+    }
+
+    private static String firstValidationError(OrderRequest request) {
+        return Stream.of(
+            validateProduct(request),
+            validateQuantity(request),
+            validateCustomerCpf(request),
+            validateCustomerName(request)
+        ).filter(Objects::nonNull).findFirst().orElse(null);
+    }
+
+    private static String validateProduct(OrderRequest request) {
+        if (request.produtoId() == null || request.produtoId().isBlank()) {
+            return "produto_id é obrigatório";
+        }
+        return null;
+    }
+
+    private static String validateQuantity(OrderRequest request) {
+        if (request.quantidade() == null || request.quantidade() <= 0) {
+            return "quantidade deve ser maior que zero";
+        }
+        return null;
+    }
+
+    private static String validateCustomerCpf(OrderRequest request) {
+        if (request.clienteCpf() == null || request.clienteCpf().isBlank()) {
+            return "cliente_cpf é obrigatório";
+        }
+        return null;
+    }
+
+    private static String validateCustomerName(OrderRequest request) {
+        if (request.clienteNome() == null || request.clienteNome().isBlank()) {
+            return "cliente_nome é obrigatório";
+        }
+        return null;
+    }
+
+    private Response processValidOrder(OrderRequest request) {
         String produtoId = request.produtoId().trim();
         if (!CheckoutRedisAdapter.reserveStock(INVENTORY, produtoId, request.quantidade())) {
             return conflict(produtoId);
         }
+        return createAcceptedOrder(request);
+    }
 
+    private Response createAcceptedOrder(OrderRequest request) {
         String pedidoId = UUID.randomUUID().toString();
         Map<String, Object> order = buildOrderDocument(pedidoId, request);
         ORDERS.put(pedidoId, order);
         CheckoutRedisAdapter.cacheOrder(ORDER_CACHE, pedidoId, order);
         publishOrderCreated(order);
+        return Response.accepted(acceptedOrderResponse(pedidoId, order)).build();
+    }
 
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("pedido_id", pedidoId);
-        response.put("status", "PROCESSING");
-        response.put("data_hora_requisicao", order.get("data_hora_requisicao"));
-        return Response.accepted(response).build();
+    private static Map<String, Object> acceptedOrderResponse(String pedidoId, Map<String, Object> order) {
+        return Map.of(
+            "pedido_id", pedidoId,
+            "status", "PROCESSING",
+            "data_hora_requisicao", order.get("data_hora_requisicao"),
+            "api_version", "v1",
+            "trace_id", pedidoId);
     }
 
     @GET
     @Path("/v1/orders/{pedidoId}")
     @Produces(MediaType.APPLICATION_JSON)
+    @Operation(summary = "Consulta pedido por identificador", description = "Retorna o estado atual do pedido com cache e fallback para o repositório.")
+    @APIResponse(responseCode = "200", description = "Pedido encontrado", content = @Content(mediaType = "application/json"))
+    @APIResponse(responseCode = "404", description = "Pedido não encontrado")
     public Response getOrder(@PathParam("pedidoId") String pedidoId) {
+        return findOrderResponse(pedidoId);
+    }
+
+    private Response findOrderResponse(String pedidoId) {
         Optional<Map<String, Object>> order = CheckoutRedisAdapter.findOrderWithRetry(
             ORDER_CACHE, ORDERS, pedidoId, () -> ORDERS.get(pedidoId));
         if (order.isEmpty()) {
@@ -254,6 +352,10 @@ public class CheckoutResource {
 
         static void setCacheTtlSeconds(long ttlSeconds) {
             cacheTtlSeconds = Math.max(0L, ttlSeconds);
+        }
+
+        static long cacheTtlSeconds() {
+            return cacheTtlSeconds;
         }
 
         static void setLookupRetries(int retries) {

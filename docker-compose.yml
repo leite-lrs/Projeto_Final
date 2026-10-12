@@ -5,7 +5,7 @@ services:
     image: redis:7-alpine
     container_name: flash-sale-redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data
@@ -19,8 +19,11 @@ services:
     image: rabbitmq:3.13-management
     container_name: flash-sale-rabbitmq
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-guest}
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:
@@ -33,15 +36,15 @@ services:
     image: postgres:16-alpine
     container_name: flash-sale-postgres
     environment:
-      POSTGRES_DB: postgres
-      POSTGRES_USER: appuser
-      POSTGRES_PASSWORD: appsecret
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_USER: ${POSTGRES_USER:-appuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-appsecret}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U appuser -d postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-appuser} -d ${POSTGRES_DB:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -51,11 +54,20 @@ services:
       context: ./checkout-service
     container_name: flash-sale-checkout-service
     env_file:
-      - .env.example
+      - .env
     environment:
-      CHECKOUT_PORT: 3001
+      CHECKOUT_PORT: ${CHECKOUT_PORT:-3001}
+      APP_ENV: ${APP_ENV:-dev}
+      APP_REQUIRE_AUTH: ${APP_REQUIRE_AUTH:-false}
+      APP_API_KEY: ${APP_API_KEY:-change-me-in-production}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_USER: ${POSTGRES_USER:-appuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-appsecret}
+      RABBITMQ_HOST: rabbitmq
     ports:
-      - "3001:3001"
+      - "${CHECKOUT_PORT:-3001}:3001"
     depends_on:
       redis:
         condition: service_healthy
@@ -69,11 +81,20 @@ services:
       context: ./order-processor-service
     container_name: flash-sale-order-processor
     env_file:
-      - .env.example
+      - .env
     environment:
-      ORDER_PROCESSOR_PORT: 3002
+      ORDER_PROCESSOR_PORT: ${ORDER_PROCESSOR_PORT:-3002}
+      APP_ENV: ${APP_ENV:-dev}
+      APP_REQUIRE_AUTH: ${APP_REQUIRE_AUTH:-false}
+      APP_API_KEY: ${APP_API_KEY:-change-me-in-production}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_USER: ${POSTGRES_USER:-appuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-appsecret}
+      RABBITMQ_HOST: rabbitmq
     ports:
-      - "3002:3002"
+      - "${ORDER_PROCESSOR_PORT:-3002}:3002"
     depends_on:
       rabbitmq:
         condition: service_healthy

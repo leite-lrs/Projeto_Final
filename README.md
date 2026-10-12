@@ -26,7 +26,7 @@ Este repositório foi iniciado com a infraestrutura mínima necessária para o s
 ## Como subir a infraestrutura
 
 1. Instale o Docker Desktop ou o Docker Engine.
-2. Copie o arquivo .env.example para .env, se quiser customizar as variáveis.
+2. Copie o arquivo .env.example para .env e ajuste os valores sensíveis do ambiente (`APP_API_KEY`, `POSTGRES_PASSWORD`, `RABBITMQ_DEFAULT_PASS`).
 3. Execute:
 
 ```bash
@@ -39,6 +39,13 @@ docker compose up -d --build
 - PostgreSQL: localhost:5432
 - Checkout Service: localhost:3001
 - Order Processor Service: localhost:3002
+
+## Segurança e produção
+
+- O ambiente é configurável por variáveis de ambiente; nenhuma secret sensível deve ficar hardcoded no código ou no compose.
+- A autenticação por API key é ativada via `APP_REQUIRE_AUTH=true` ou automaticamente quando `APP_ENV=prod`; configure `APP_API_KEY` com um segredo próprio. Valores de exemplo como `change-me-in-production` não autenticam.
+- Endpoints de health (`/health`, `/health/live`, `/health/ready`) ficam públicos para monitoramento, enquanto endpoints de negócio exigem a chave quando o ambiente exigir autenticação.
+- O OpenAPI fica disponível em `/openapi` e a UI em `/swagger-ui`.
 
 ## Execução e demonstração do fluxo
 

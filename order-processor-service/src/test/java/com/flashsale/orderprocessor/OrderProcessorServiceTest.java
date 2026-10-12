@@ -12,12 +12,12 @@ import org.junit.jupiter.api.Test;
 class OrderProcessorServiceTest {
     @BeforeEach
     void setUp() {
-        OrderProcessorResource.resetState();
+        OrderObservability.reset();
     }
 
     @Test
     void shouldConfirmValidOrder() {
-        OrderProcessorService service = new OrderProcessorService();
+        OrderProcessorService service = createService();
         ProcessOrderRequest request = new ProcessOrderRequest(
             "pedido-01",
             "PROD-001",
@@ -42,7 +42,7 @@ class OrderProcessorServiceTest {
 
     @Test
     void shouldCancelFailureOrderAndPublishCompensation() {
-        OrderProcessorService service = new OrderProcessorService();
+        OrderProcessorService service = createService();
         ProcessOrderRequest request = new ProcessOrderRequest(
             "pedido-99",
             "PROD-999",
@@ -56,5 +56,9 @@ class OrderProcessorServiceTest {
         assertTrue(order.compensacao());
         assertEquals(1, service.compensationQueue().size());
         assertEquals("pedido-99", service.compensationQueue().getFirst().get("pedido_id"));
+    }
+
+    private OrderProcessorService createService() {
+        return new OrderProcessorService(new InMemoryOrderPersistenceRepository());
     }
 }

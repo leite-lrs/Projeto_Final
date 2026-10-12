@@ -22,14 +22,24 @@ public final class RabbitMqClient {
     private RabbitMqClient() {}
 
     public static void publish(String queueName, Map<String, Object> payload) {
+        try {
+            publishMessage(queueName, payload);
+        } catch (Exception exception) {
+            logPublishFailure(queueName, exception);
+        }
+    }
+
+    private static void publishMessage(String queueName, Map<String, Object> payload) throws Exception {
         try (Connection connection = connection(); Channel channel = connection.createChannel()) {
             channel.queueDeclare(queueName, true, false, false, null);
             byte[] body = OBJECT_MAPPER.writeValueAsBytes(payload);
             channel.basicPublish("", queueName, null, body);
-            LOG.infov("Mensagem publicada na fila {0}: {1}", queueName, payload);
-        } catch (Exception exception) {
-            LOG.warnv("Fila {0} indisponível, mantendo fallback local: {1}", queueName, exception.getMessage());
+            LOG.infov("Mensagem publicada na fila {0}", queueName);
         }
+    }
+
+    private static void logPublishFailure(String queueName, Exception exception) {
+        LOG.warnv("Fila {0} indisponível, mantendo fallback local: {1}", queueName, exception.getMessage());
     }
 
     public static void consume(String queueName, Consumer<Map<String, Object>> handler) {
