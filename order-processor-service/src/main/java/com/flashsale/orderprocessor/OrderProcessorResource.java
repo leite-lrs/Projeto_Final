@@ -27,6 +27,49 @@ public class OrderProcessorResource {
         return status;
     }
 
+    static {
+        RabbitMqClient.consume("order-created", payload -> {
+            ProcessOrderRequest request = new ProcessOrderRequest(
+                String.valueOf(payload.getOrDefault("pedido_id", "")),
+                String.valueOf(payload.getOrDefault("produto_id", "")),
+                payload.get("quantidade") instanceof Number number ? number.intValue() : null,
+                String.valueOf(payload.getOrDefault("cliente_cpf", "")),
+                String.valueOf(payload.getOrDefault("cliente_nome", "")));
+            if (request.pedidoId().isBlank()) {
+                return;
+            }
+            ORDER_SERVICE.processOrder(request);
+        });
+        RabbitMqClient.consume("order-compensation", payload -> {
+            String pedidoId = String.valueOf(payload.getOrDefault("pedido_id", ""));
+            String produtoId = String.valueOf(payload.getOrDefault("produto_id", ""));
+            Object quantidade = payload.get("quantidade");
+            if (pedidoId.isBlank() || produtoId.isBlank() || quantidade == null) {
+                return;
+            }
+            int quantity = quantidade instanceof Number number ? number.intValue() : 0;
+            String motivo = String.valueOf(payload.getOrDefault("motivo", "Compensação solicitada"));
+            ORDER_SERVICE.findOrder(pedidoId);
+            if (pedidoId != null && !pedidoId.isBlank()) {
+                OrderRecord existing = ORDER_SERVICE.findOrder(pedidoId);
+                if (existing == null) {
+                    ORDER_SERVICE.processOrder(new ProcessOrderRequest(
+                        pedidoId,
+                        produtoId,
+                        quantity,
+                        "",
+                        ""));
+                }
+            }
+            if (pedidoId != null && !pedidoId.isBlank()) {
+                OrderRecord record = ORDER_SERVICE.findOrder(pedidoId);
+                if (record != null) {
+                    record.withStatus(OrderStatus.CANCELLED, motivo, true);
+                }
+            }
+        });
+    }
+
     @POST
     @Path("/v1/process-order")
     @Consumes(MediaType.APPLICATION_JSON)

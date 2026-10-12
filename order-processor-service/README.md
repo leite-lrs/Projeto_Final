@@ -5,10 +5,11 @@ Microsserviço responsável por consumir e processar pedidos, persistir dados e 
 ## Funcionalidades
 
 - processa mensagens do checkout com validação de payload
-- salva o pedido em memória com status PROCESSING, CONFIRMED ou CANCELLED
+- salva o pedido em memória e sincroniza a persistência por repositório com PostgreSQL quando disponível
 - aplica a regra de falha simulada para `PROD-999`
 - publica compensação em fila interna para cenários de cancelamento
 - expõe endpoints de saúde e consulta por pedido
+- mantém a estrutura de pedidos versionada por migrations Flyway
 
 ## Endpoints principais
 
